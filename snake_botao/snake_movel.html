@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover" />
+  <title>Jogo da Cobrinha — Mobile</title>
+  <style>
+    :root{--bg:#0b1220;--panel:#0f1724;--accent:#22c55e;--muted:#94a3b8;--danger:#ef4444}
+    html,body{height:100%;margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;background:linear-gradient(180deg,#071024 0%, #081626 100%);color:#e6eef8}
+    .wrap{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:12px;box-sizing:border-box}
+    .card{width:100%;max-width:720px;background:rgba(255,255,255,0.02);border-radius:14px;padding:12px;box-shadow:0 8px 30px rgba(2,6,23,0.6);backdrop-filter:blur(6px)}
+    header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+    h1{font-size:18px;margin:0}
+    .hud{display:flex;gap:10px;align-items:center}
+    .chip{background:rgba(255,255,255,0.03);padding:6px 10px;border-radius:10px;font-size:14px;color:var(--muted)}
+    .canvas-wrap{position:relative;padding:8px;background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));border-radius:10px}
+    canvas{display:block;border-radius:8px;background:linear-gradient(180deg,#052033,#083245);touch-action:none}
+    .overlay{position:absolute;inset:8px;pointer-events:none;display:flex;align-items:flex-start;justify-content:space-between}
+    .center-msg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
+    .msg{background:rgba(2,6,23,0.6);padding:12px 18px;border-radius:10px;font-weight:600;color:#e6eef8}
+    .controls{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;justify-content:center}
+    .btn{appearance:none;border:0;padding:10px 12px;border-radius:10px;background:linear-gradient(180deg,#0b2540,#0b2030);color:#e6eef8;font-weight:600;min-width:86px}
+    .btn:active{transform:translateY(1px)}
+    .btn.small{min-width:46px;padding:8px}
+    .touch-pad{position:relative;width:220px;height:220px;border-radius:12px;background:transparent;display:flex;align-items:center;justify-content:center}
+    .arrows{position:absolute;inset:0;display:grid;grid-template-columns:1fr 1fr 1fr;grid-template-rows:1fr 1fr 1fr;gap:6px;padding:16px;box-sizing:border-box;pointer-events:auto}
+    .arrow{display:flex;align-items:center;justify-content:center;border-radius:8px;background:rgba(255,255,255,0.03);font-size:18px;padding:6px;user-select:none}
+    .arrow.disabled{opacity:0.35}
+    .footer{font-size:12px;color:var(--muted);text-align:center;margin-top:8px}
+    @media (max-width:480px){.card{padding:10px}.touch-pad{width:180px;height:180px}}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <header>
+        <h1>Jogo da Cobrinha — Mobile</h1>
+        <div class="hud">
+          <div class="chip">Frutinhas: <span id="score">0</span>/20</div>
+          <div class="chip">Tamanho: <span id="length">1</span></div>
+        </div>
+      </header>
+
+      <div class="canvas-wrap">
+        <canvas id="game" width="600" height="600"></canvas>
+        <div class="overlay">
+          <div style="pointer-events:auto;">
+            <button class="btn small" id="btn-pause">Pausa</button>
+            <button class="btn small" id="btn-restart">Reiniciar</button>
+          </div>
+          <div style="pointer-events:none;opacity:0.85;color:var(--muted);font-size:13px;padding:6px">Use swipe ou setas para controlar</div>
+        </div>
+        <div class="center-msg" id="centerMsg" style="display:none">
+          <div class="msg" id="endMsg">Game Over</div>
+        </div>
+      </div>
+
+      <div class="controls">
+        <div class="touch-pad" id="touchPad" aria-hidden>
+          <div class="arrows">
+            <div></div>
+            <div class="arrow" data-dir="up">↑</div>
+            <div></div>
+            <div class="arrow" data-dir="left">←</div>
+            <div></div>
+            <div class="arrow" data-dir="right">→</div>
+            <div></div>
+            <div class="arrow" data-dir="down">↓</div>
+            <div></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="footer">Dica: salve como atalho na tela inicial para jogar em tela cheia.</div>
+    </div>
+  </div>
+
+  <script>
+  // Jogo da cobrinha simples, otimizado para celular.
+  (function(){
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+    let gridSize = 20; // número de células por linha/coluna (ajustável)
+    let cols, rows, cell;
+    let snake, dir, nextDir, fruit, score = 0, maxScore = 20, speed = 120; // ms por frame
+    let running = false, ended = false, loopId = null;
+
+    const scoreEl = document.getElementById('score');
+    const lengthEl = document.getElementById('length');
+    const centerMsg = document.getElementById('centerMsg');
+    const endMsg = document.getElementById('endMsg');
+
+    function fitCanvas(){
+      // ocupa largura disponível mantendo quadrado
+      const rect = canvas.getBoundingClientRect();
+      const parent = canvas.parentElement;
+      const width = Math.min(parent.clientWidth - 16, window.innerHeight * 0.55, 720);
+      canvas.width = width;
+      canvas.height = width;
+      cell = Math.floor(canvas.width / gridSize);
+      cols = gridSize;
+      rows = gridSize;
+      draw();
+    }
+
+    window.addEventListener('resize', fitCanvas);
+
+    function reset(){
+      snake = [{x: Math.floor(cols/2), y: Math.floor(rows/2)}];
+      dir = {x:1,y:0};
+      nextDir = dir;
+      placeFruit();
+      score = 0;
+      running = true;
+      ended = false;
+      scoreEl.textContent = score;
+      lengthEl.textContent = snake.length;
+      centerMsg.style.display = 'none';
+      speed = 120;
+      startLoop();
+    }
+
+    function placeFruit(){
+      let ok=false; let x,y;
+      while(!ok){
+        x = Math.floor(Math.random()*cols);
+        y = Math.floor(Math.random()*rows);
+        ok = !snake.some(s => s.x===x && s.y===y);
+      }
+      fruit = {x,y};
+    }
+
+    function step(){
+      if(ended || !running) return;
+      dir = nextDir;
+      const head = {x: snake[0].x + dir.x, y: snake[0].y + dir.y};
+      // colisão com parede -> wrap-around OU game over? usaremos wrap-around
+      if(head.x < 0) head.x = cols-1;
+      if(head.x >= cols) head.x = 0;
+      if(head.y < 0) head.y = rows-1;
+      if(head.y >= rows) head.y = 0;
+
+      // colisão com o corpo -> game over
+      if(snake.some(s => s.x===head.x && s.y===head.y)){
+        gameOver(false);
+        return;
+      }
+
+      snake.unshift(head);
+      // comeu fruta?
+      if(head.x === fruit.x && head.y === fruit.y){
+        score += 1;
+        scoreEl.textContent = score;
+        placeFruit();
+        // alongar e acelerar levemente
+        if(speed > 45) speed = Math.max(45, speed - 3);
+        if(score >= maxScore){
+          gameOver(true);
+          return;
+        }
+      } else {
+        snake.pop();
+      }
+      lengthEl.textContent = snake.length;
+      draw();
+    }
+
+    function draw(){
+      // fundo
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+      // grade suave
+      ctx.fillStyle = '#031826';
+      ctx.fillRect(0,0,canvas.width,canvas.height);
+
+      // fruta
+      const fx = fruit.x * cell + cell/2;
+      const fy = fruit.y * cell + cell/2;
+      ctx.beginPath();
+      ctx.fillStyle = '#ff4d6d';
+      ctx.arc(fx, fy, cell*0.45, 0, Math.PI*2);
+      ctx.fill();
+      // sombreado pequeno
+      ctx.fillStyle = 'rgba(255,255,255,0.12)';
+      ctx.beginPath();
+      ctx.arc(fx - cell*0.12, fy - cell*0.16, cell*0.15, 0, Math.PI*2);
+      ctx.fill();
+
+      // cobrinha
+      for(let i=snake.length-1;i>=0;i--){
+        const s = snake[i];
+        const x = s.x*cell; const y = s.y*cell;
+        const radius = Math.max(2, cell*0.18);
+        if(i===0) ctx.fillStyle = '#22c55e'; else ctx.fillStyle = '#166534';
+        roundRect(ctx, x+1, y+1, cell-2, cell-2, radius);
+        ctx.fill();
+      }
+    }
+
+    function roundRect(ctx,x,y,w,h,r){
+      ctx.beginPath();
+      ctx.moveTo(x+r,y);
+      ctx.arcTo(x+w,y,x+w,y+h,r);
+      ctx.arcTo(x+w,y+h,x,y+h,r);
+      ctx.arcTo(x,y+h,x,y,r);
+      ctx.arcTo(x,y,x+w,y,r);
+      ctx.closePath();
+    }
+
+    function startLoop(){
+      if(loopId) clearInterval(loopId);
+      loopId = setInterval(step, speed);
+    }
+
+    function gameOver(won){
+      ended = true; running = false;
+      centerMsg.style.display = 'flex';
+      endMsg.textContent = won ? 'Game Over — Você venceu!' : 'Game Over — Colidiu!';
+      // pequeno destaque
+      if(won) endMsg.style.background = 'linear-gradient(90deg,#09392a,#0f5d3a)';
+      else endMsg.style.background = 'linear-gradient(90deg,#2b0a0a,#4b0f0f)';
+      // parar loop
+      if(loopId) clearInterval(loopId);
+    }
+
+    // controles por teclado (úteis em emuladores) e botões
+    document.addEventListener('keydown', e => {
+      if(e.key === 'ArrowUp') setDir(0,-1);
+      if(e.key === 'ArrowDown') setDir(0,1);
+      if(e.key === 'ArrowLeft') setDir(-1,0);
+      if(e.key === 'ArrowRight') setDir(1,0);
+      if(e.key === 'p' || e.key === 'P') togglePause();
+      if(e.key === 'r' || e.key === 'R') reset();
+    });
+
+    function setDir(x,y){
+      // impedir 180 graus
+      if(dir.x === -x && dir.y === -y) return;
+      nextDir = {x,y};
+    }
+
+    // touch swipe detection
+    (function(){
+      let startX=0, startY=0, startT=0;
+      const threshold = 20; // px
+      canvas.addEventListener('touchstart', e => {
+        if(e.touches.length!==1) return;
+        const t = e.touches[0]; startX = t.clientX; startY = t.clientY; startT=Date.now();
+      }, {passive:true});
+      canvas.addEventListener('touchend', e => {
+        if(!e.changedTouches) return;
+        const t = e.changedTouches[0]; const dx = t.clientX - startX; const dy = t.clientY - startY;
+        if(Math.abs(dx) < threshold && Math.abs(dy) < threshold) return;
+        if(Math.abs(dx) > Math.abs(dy)) setDir(dx>0?1: -1, 0); else setDir(0, dy>0?1:-1);
+      });
+    })();
+
+    // on-screen arrows
+    document.querySelectorAll('.arrow').forEach(el => {
+      el.addEventListener('touchstart', e => { e.preventDefault(); const d = el.dataset.dir; applyArrow(d); }, {passive:false});
+      el.addEventListener('mousedown', e => { const d = el.dataset.dir; applyArrow(d); });
+    });
+    function applyArrow(d){ if(d==='up') setDir(0,-1); if(d==='down') setDir(0,1); if(d==='left') setDir(-1,0); if(d==='right') setDir(1,0); }
+
+    // botões de controle
+    document.getElementById('btn-pause').addEventListener('click', togglePause);
+    document.getElementById('btn-restart').addEventListener('click', reset);
+
+    function togglePause(){ if(ended) return; running = !running; if(running) startLoop(); else { if(loopId) clearInterval(loopId);} document.getElementById('btn-pause').textContent = running ? 'Pausa' : 'Retomar'; }
+
+    // iniciar
+    fitCanvas(); reset();
+
+    // melhorar UX: quando orientado em portrait, aumentar grid para telas maiores
+    function adaptGridBySize(){
+      const w = Math.min(window.innerWidth, window.innerHeight);
+      if(w <= 360) gridSize = 16;
+      else if(w <= 420) gridSize = 18;
+      else gridSize = 20;
+      fitCanvas();
+    }
+    adaptGridBySize();
+    window.addEventListener('orientationchange', () => setTimeout(adaptGridBySize, 150));
+
+    // toque para reiniciar quando game over
+    centerMsg.addEventListener('touchstart', () => { if(ended) reset(); });
+    centerMsg.addEventListener('click', () => { if(ended) reset(); });
+
+  })();
+  </script>
+</body>
+</html>
